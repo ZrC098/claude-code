@@ -29,10 +29,20 @@ async function call(method, body) {
   return data;
 }
 
+let needPrice = false;
+
 async function answer(action) {
+  const price = $("price").value.trim();
+  if (action === "approve" && needPrice && !/^\d[\d\s]*([.,]\d{1,2})?\s*€?$/.test(price)) {
+    $("result").textContent = "Indiquez le prix de votre offre (ex. : 850).";
+    $("result").className = "error";
+    show($("result"));
+    $("price").focus();
+    return;
+  }
   $("approve").disabled = $("reject").disabled = true;
   try {
-    const r = await call("POST", { t: token, action, comment: $("comment").value });
+    const r = await call("POST", { t: token, action, price, comment: $("comment").value });
     done(r.message, r.recorded);
   } catch (e) {
     done(e.message, false);
@@ -56,6 +66,9 @@ async function answer(action) {
       return done(d.status === "open" ? "Cette demande n'attend plus de réponse de votre part."
         : `Cette demande est close (${d.status}).`);
     }
+    needPrice = !!d.need_price;
+    $("approve-label").textContent = d.labels.approve;
+    show($("price-row"), needPrice);
     $("approve").textContent = d.labels.approve;
     $("reject").textContent = d.labels.reject;
     if (preselected === "approve" || preselected === "reject") $(preselected).classList.add("preselected");

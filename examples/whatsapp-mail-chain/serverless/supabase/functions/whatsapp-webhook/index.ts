@@ -1,7 +1,8 @@
-// Whapi webhook: a message in a watched WhatsApp group starts a chain and
-// e-mails the first list (rang 1).
+// Whapi webhook: a message containing the trigger word (« Chargement ») in a
+// watched WhatsApp group creates the transport « À valider » in the pilotage
+// app, starts a chain and e-mails the first list (rang 1).
 // URL: https://<projet>.supabase.co/functions/v1/whatsapp-webhook?token=<mc_settings.webhook_token>
-import { admin, Chain, json, loadConfig, safeEqual, sendLevel } from "./chain.ts";
+import { admin, Chain, json, loadConfig, normalize, pushToPilotage, safeEqual, sendLevel } from "./chain.ts";
 
 type Msg = { id: string; group: string; groupName: string; sender: string; senderName: string; text: string };
 
@@ -57,6 +58,12 @@ Deno.serve(async (req) => {
       // Numbers only: display names are chosen by the sender and can be faked.
       if (!allowed.has(phoneKey(m.sender))) { ignored.push("sender"); continue; }
     }
+    // Updates such as « Solution trouvée » do not contain the word: ignored.
+    const keyword = normalize(s.trigger_keyword ?? "").trim();
+    if (keyword && !new RegExp(`(^|[^a-z0-9])${keyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`).test(normalize(m.text))) {
+      ignored.push("keyword");
+      continue;
+    }
     if (!levels.length) { ignored.push("no levels"); continue; }
     if (s.max_chains_per_hour > 0) {
       const since = new Date(Date.now() - 3600_000).toISOString();
@@ -73,6 +80,7 @@ Deno.serve(async (req) => {
     if (error) throw new Error(`insert chain: ${error.message}`);
     if (!data?.length) { ignored.push("duplicate"); continue; }
     const chain = data[0] as Chain;
+    chain.pilotage_ids = await pushToPilotage(sb, chain);
     await sendLevel(sb, s, levels, chain);
     started.push(chain.id);
   }

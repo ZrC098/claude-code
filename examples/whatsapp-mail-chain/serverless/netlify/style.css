@@ -28,7 +28,7 @@ blockquote {
   border-left: 4px solid var(--muted); white-space: pre-wrap; overflow-wrap: anywhere;
 }
 label { display: block; font-weight: 600; margin: 16px 0 6px; }
-textarea {
+textarea, input[type=text] {
   width: 100%; padding: 10px; font: inherit; color: inherit; background: var(--bg);
   border: 1px solid var(--border); border-radius: 8px; resize: vertical;
 }

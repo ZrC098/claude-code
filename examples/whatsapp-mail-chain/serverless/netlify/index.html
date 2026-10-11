@@ -20,6 +20,10 @@
     </section>
 
     <form id="form" hidden>
+      <div id="price-row" hidden>
+        <label for="price">Votre prix HT (€) <span class="muted small">obligatoire pour « <span id="approve-label"></span> »</span></label>
+        <input id="price" type="text" inputmode="decimal" autocomplete="off" placeholder="Ex. : 850">
+      </div>
       <label for="comment">Commentaire (facultatif)</label>
       <textarea id="comment" maxlength="500" rows="3" placeholder="Ex. : disponible demain 8h"></textarea>
       <div class="actions">

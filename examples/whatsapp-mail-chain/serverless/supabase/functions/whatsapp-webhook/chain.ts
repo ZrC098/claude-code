@@ -15,6 +15,7 @@ export const json = (body: unknown, status = 200) =>
 
 export type Settings = {
   mode: "validation" | "cascade";
+  trigger_keyword: string;
   groups: string[];
   allowed_senders: string[];
   max_chains_per_hour: number;
@@ -25,10 +26,17 @@ export type Settings = {
   webhook_token: string;
   link_secret: string;
 };
-export type Level = { position: number; name: string; recipients: string[] };
+export type Level = { position: number; name: string; recipients: string[]; carrier: string };
 export type Chain = {
   id: string; grp: string; sender: string; text: string; level: number; status: string;
+  price: number | null; booked_by: string | null; pilotage_ids: string[];
 };
+
+// Lower case, no accents: « Chargement », « CHARGEMENT » and « chargément » all match.
+export const normalize = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+
+export const euros = (n: number) =>
+  new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 2 }).format(n);
 
 export function admin(): SupabaseClient {
   const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ??
@@ -136,7 +144,7 @@ async function sendMail(sb: SupabaseClient, from: string, to: string[], subject:
 }
 
 export async function history(sb: SupabaseClient, chainId: string, levels: Level[], mode: Settings["mode"]) {
-  const { data } = await sb.from("mc_events").select("level, actor, detail, at")
+  const { data } = await sb.from("mc_events").select("level, actor, detail, price, at")
     .eq("chain_id", chainId).eq("kind", "decision").order("at");
   const l = labels(mode);
   return (data ?? []).map((e) => {
@@ -144,7 +152,8 @@ export async function history(sb: SupabaseClient, chainId: string, levels: Level
     const verb = action === "approve" ? l.approve : l.reject;
     const comment = rest.join(": ");
     const name = levels[e.level]?.name ?? `Rang ${e.level + 1}`;
-    return `${name} : ${verb} par ${e.actor}${comment ? ` (« ${comment} »)` : ""}`;
+    const price = e.price != null ? ` à ${euros(Number(e.price))}` : "";
+    return `${name} : ${verb} par ${e.actor}${price}${comment ? ` (« ${comment} »)` : ""}`;
   });
 }
 
@@ -191,8 +200,10 @@ export async function notifyClose(sb: SupabaseClient, s: Settings, levels: Level
   const l = labels(s.mode);
   const word = chain.status === "approved" ? l.approved : l.rejected;
   const hist = await history(sb, chain.id, levels, s.mode);
+  const by = chain.status === "approved" && chain.booked_by
+    ? ` par ${chain.booked_by}${chain.price != null ? ` à ${euros(Number(chain.price))}` : ""}` : "";
   const html = `<div style="font-family:system-ui,Arial,sans-serif;font-size:15px;color:#18181b;max-width:560px">
-    <p>La demande WhatsApp est <b>${esc(word)}</b>.</p>${block(chain)}
+    <p>La demande WhatsApp est <b>${esc(word)}</b>${esc(by)}.</p>${block(chain)}
     <ul>${hist.map((h) => `<li>${esc(h)}</li>`).join("")}</ul></div>`;
   const text = `Demande ${word} (${chain.grp}) :\n\n${chain.text}\n\n${hist.map((h) => `- ${h}`).join("\n")}\n`;
   try {
@@ -203,4 +214,60 @@ export async function notifyClose(sb: SupabaseClient, s: Settings, levels: Level
       chain_id: chain.id, level: chain.level, kind: "send_failed", actor: "notify_on_close", detail: String(err).slice(0, 500),
     });
   }
+}
+
+// ---- pilotage app (records, collection "transports") --------------------------
+
+// Creates the transport(s) « À valider » through the existing whatsapp-demande
+// function, which splits the message (lieux, date, heure, véhicule, km, prix
+// estimés). Returns the ids of the records it created.
+export async function pushToPilotage(sb: SupabaseClient, chain: Chain): Promise<string[]> {
+  try {
+    const { data: tk } = await sb.from("webhook_tokens").select("token").limit(1).maybeSingle();
+    if (!tk?.token) throw new Error("aucun jeton dans webhook_tokens");
+    const res = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/whatsapp-demande`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-pilotage-token": tk.token },
+      body: JSON.stringify({ texte: chain.text, titre: chain.sender }),
+    });
+    const out = await res.json().catch(() => ({}));
+    if (!res.ok || !out.ok) throw new Error(`whatsapp-demande ${res.status}: ${JSON.stringify(out).slice(0, 200)}`);
+    const ids = (out.demandes ?? []).filter((d: any) => d.enregistre).map((d: any) => String(d.id));
+    await sb.from("mc_chains").update({ pilotage_ids: ids }).eq("id", chain.id);
+    await sb.from("mc_events").insert({
+      chain_id: chain.id, level: chain.level, kind: "pilotage",
+      detail: ids.length ? `créé : ${ids.join(", ")}` : "aucun chargement reconnu par le découpage",
+    });
+    return ids;
+  } catch (err) {
+    console.error(`chain ${chain.id}: pilotage failed`, err);
+    await sb.from("mc_events").insert({
+      chain_id: chain.id, level: chain.level, kind: "pilotage_failed", detail: String(err).slice(0, 500),
+    });
+    return [];
+  }
+}
+
+// After the chain closes: « Acceptée » with carrier and purchase price, or a note
+// when nobody was available. The sale price to XPO stays for the app.
+export async function closeInPilotage(sb: SupabaseClient, levels: Level[], chain: Chain) {
+  if (!chain.pilotage_ids?.length) return;
+  let args;
+  if (chain.status === "approved" && chain.booked_by) {
+    const level = levels.find((lv) => lv.recipients.includes(chain.booked_by!));
+    const carrier = level?.carrier || chain.booked_by;
+    const price = chain.price != null ? Number(chain.price) : null;
+    args = {
+      p_ids: chain.pilotage_ids, p_status: "acceptee",
+      p_patch: { transporteur: carrier, ...(price != null ? { prixAchat: price } : {}) },
+      p_note: `Booké par mail : ${carrier}${price != null ? ` à ${euros(price)}` : ""}`,
+    };
+  } else {
+    args = { p_ids: chain.pilotage_ids, p_status: null, p_patch: {}, p_note: `Sans preneur (rangs 1 à ${levels.length})` };
+  }
+  const { error } = await sb.rpc("mc_pilotage_update", args);
+  await sb.from("mc_events").insert({
+    chain_id: chain.id, level: chain.level, kind: error ? "pilotage_failed" : "pilotage",
+    detail: error ? error.message : `mis à jour : ${args.p_note}`,
+  });
 }
