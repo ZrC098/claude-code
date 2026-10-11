@@ -97,10 +97,27 @@ export function labels(mode: Settings["mode"]) {
         intro: "Une demande est arrivée sur WhatsApp. Merci d'y répondre :" };
 }
 
+// Brevo when BREVO_API_KEY is set (works with a single verified address, no
+// domain needed), otherwise Resend (needs a verified domain).
 async function sendMail(from: string, to: string[], subject: string, html: string, text: string) {
-  const key = Deno.env.get("RESEND_API_KEY");
-  if (!key) throw new Error("RESEND_API_KEY manquant (secret Edge Functions)");
   if (!from) throw new Error("mc_settings.mail_from est vide");
+  const brevo = Deno.env.get("BREVO_API_KEY");
+  if (brevo) {
+    const m = from.match(/^\s*(.*?)\s*<([^>]+)>\s*$/);
+    const sender = m ? { name: m[1] || m[2], email: m[2] } : { email: from.trim() };
+    const res = await fetch("https://api.brevo.com/v3/smtp/email", {
+      method: "POST",
+      headers: { "api-key": brevo, "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({
+        sender, replyTo: { email: sender.email }, to: to.map((email) => ({ email })),
+        subject, htmlContent: html, textContent: text,
+      }),
+    });
+    if (!res.ok) throw new Error(`Brevo ${res.status}: ${(await res.text()).slice(0, 300)}`);
+    return;
+  }
+  const key = Deno.env.get("RESEND_API_KEY");
+  if (!key) throw new Error("BREVO_API_KEY ou RESEND_API_KEY manquant (secret Edge Functions)");
   const res = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },

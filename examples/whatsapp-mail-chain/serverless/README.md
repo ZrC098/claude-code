@@ -1,7 +1,7 @@
 # Version sans serveur : Whapi + Supabase + Netlify
 
 ```
-Groupe WhatsApp ──Whapi──▶ Supabase « whatsapp-webhook » ──Resend──▶ mail Rang 1 (un lien personnel par destinataire)
+Groupe WhatsApp ──Whapi──▶ Supabase « whatsapp-webhook » ──Brevo──▶ mail Rang 1 (un lien personnel par destinataire)
                                                                         │ clic Valider / Refuser
                                                                         ▼
                       Page Netlify « reponse-demandes-tps » ──▶ Supabase « decision » ──▶ mail Rang suivant … ou clôture
@@ -36,14 +36,15 @@ Groupe WhatsApp ──Whapi──▶ Supabase « whatsapp-webhook » ──Resen
 | `groups` | Identifiants des groupes surveillés (`…@g.us`). Vide = aucun : les groupes vus apparaissent dans `mc_seen_groups`. |
 | `allowed_senders` | Numéros autorisés à déclencher (vide = tout le groupe). Le nom affiché n'est jamais utilisé. |
 | `max_chains_per_hour` | Plafond de demandes par heure (10). |
-| `mail_from` | Expéditeur, ex. `Demandes TPS <demandes@votre-domaine.fr>` (domaine vérifié chez Resend). |
+| `mail_from` | Expéditeur, ex. `Transports BYVARI <adresse@orange.fr>` : adresse vérifiée chez Brevo (ou domaine vérifié chez Resend). |
 | `notify_on_close` | Adresses qui reçoivent le récapitulatif final. |
 | `decision_page_url` | `https://reponse-demandes-tps.netlify.app/` |
 | `webhook_token`, `link_secret` | Générés au hasard par la base. Ne pas diffuser. |
 
 **`mc_levels`** : une ligne par rang (`position` 0 = rang 1, `name`, `recipients` = liste d'adresses).
 
-**Secret Edge Functions** (Supabase > Edge Functions > Secrets) : `RESEND_API_KEY`.
+**Secret Edge Functions** (Supabase > Edge Functions > Secrets) : `BREVO_API_KEY` (aucun nom de domaine requis,
+l'adresse d'expéditeur est vérifiée par mail chez Brevo) ou, à défaut, `RESEND_API_KEY` (domaine vérifié requis).
 
 ## Suivi
 
