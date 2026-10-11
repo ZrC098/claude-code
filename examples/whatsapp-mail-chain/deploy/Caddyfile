@@ -1,0 +1,8 @@
+{$DOMAIN} {
+	# Only the webhook and the health check are exposed.
+	@allowed path /webhook/whatsapp /health
+	handle @allowed {
+		reverse_proxy app:8080
+	}
+	respond 404
+}

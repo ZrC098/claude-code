@@ -1,0 +1,38 @@
+{
+  "whatsapp": {
+    "groups": ["Équipe Logistique", "120363000000000000@g.us"],
+    "trigger_prefix": "",
+    "webhook_path": "/webhook/whatsapp"
+  },
+  "levels": [
+    {
+      "name": "Rang 1",
+      "recipients": ["chef.equipe@example.com", "adjoint@example.com"],
+      "timeout_hours": 24
+    },
+    {
+      "name": "Rang 2",
+      "recipients": ["responsable.site@example.com"],
+      "timeout_hours": 48
+    },
+    {
+      "name": "Rang 3 (final)",
+      "recipients": ["direction@example.com"],
+      "rules": [
+        { "keywords": ["valide", "oui", "ok"], "action": "next" },
+        { "keywords": ["non", "refus"], "action": "stop" },
+        { "keywords": ["revoir"], "action": "goto", "target": "Rang 1" }
+      ]
+    }
+  ],
+  "rules": [
+    { "keywords": ["oui", "ok", "valide", "validé", "accord", "d'accord"], "action": "next" },
+    { "keywords": ["non", "refus", "refusé", "stop", "annule"], "action": "stop" }
+  ],
+  "on_timeout": "wait",
+  "notify_on_close": ["chef.equipe@example.com"],
+  "poll_seconds": 60,
+  "db_path": "mail_chain.sqlite3",
+  "listen_host": "0.0.0.0",
+  "listen_port": 8080
+}

@@ -1,0 +1,23 @@
+# Without Docker: copy the project to /opt/whatsapp-mail-chain, then
+#   sudo cp deploy/mail-chain.service /etc/systemd/system/
+#   sudo systemctl enable --now mail-chain
+# Put a reverse proxy with HTTPS (Caddy, nginx) in front of port 8080.
+[Unit]
+Description=WhatsApp -> e-mail escalation chain
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=/opt/whatsapp-mail-chain
+EnvironmentFile=/opt/whatsapp-mail-chain/.env
+ExecStart=/usr/bin/python3 -m mail_chain serve --config /opt/whatsapp-mail-chain/config.json
+Restart=always
+RestartSec=10
+DynamicUser=yes
+StateDirectory=mail-chain
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/opt/whatsapp-mail-chain/data
+
+[Install]
+WantedBy=multi-user.target
