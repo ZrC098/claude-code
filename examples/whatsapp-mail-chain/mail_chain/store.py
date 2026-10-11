@@ -1,5 +1,6 @@
 """SQLite persistence for chains, their history, and processed e-mails."""
 
+import os
 import sqlite3
 import threading
 import time
@@ -28,11 +29,18 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE TABLE IF NOT EXISTS processed_mail (
     message_id TEXT PRIMARY KEY
 );
+CREATE TABLE IF NOT EXISTS seen_groups (
+    group_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL DEFAULT '',
+    last_seen REAL NOT NULL
+);
 """
 
 
 class Store:
     def __init__(self, path):
+        if path != ":memory:" and os.path.dirname(path):
+            os.makedirs(os.path.dirname(path), exist_ok=True)
         self._db = sqlite3.connect(path, check_same_thread=False)
         self._db.row_factory = sqlite3.Row
         self._lock = threading.Lock()
@@ -76,6 +84,17 @@ class Store:
 
     def events(self, chain_id):
         return self._exec("SELECT * FROM events WHERE chain_id=? ORDER BY at, rowid", (chain_id,))
+
+    def see_group(self, group_id, name, now=None):
+        """Remember a group the bot received a message from (see the `groups` command)."""
+        self._exec(
+            "INSERT INTO seen_groups VALUES (?,?,?) ON CONFLICT(group_id) DO UPDATE SET "
+            "name=CASE WHEN excluded.name != '' THEN excluded.name ELSE name END, "
+            "last_seen=excluded.last_seen",
+            (group_id, name or "", now or time.time()))
+
+    def seen_groups(self):
+        return self._exec("SELECT * FROM seen_groups ORDER BY last_seen DESC")
 
     def mark_mail_processed(self, message_id):
         """Return False if this e-mail was already processed."""

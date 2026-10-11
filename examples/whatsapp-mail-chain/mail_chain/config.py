@@ -133,6 +133,21 @@ def load_config(path):
     return cfg
 
 
+def load_dotenv(path):
+    """Read KEY=VALUE lines into the environment, without overriding what is already set."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    except OSError:  # missing, or not readable (systemd passes it via EnvironmentFile)
+        return
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        os.environ.setdefault(key.strip(), value.strip())
+
+
 def env(name, default=None, required=False):
     value = os.environ.get(name, default)
     if required and not value:

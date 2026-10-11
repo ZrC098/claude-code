@@ -7,7 +7,8 @@ from email.message import EmailMessage
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from mail_chain.config import load_config  # noqa: E402
+from mail_chain.config import load_config, load_dotenv  # noqa: E402
+from mail_chain.setup import run_setup  # noqa: E402
 from mail_chain.engine import Engine, match_rule  # noqa: E402
 from mail_chain.mailer import CHAIN_TAG, Reply, parse_reply, strip_quoted  # noqa: E402
 from mail_chain.store import Store  # noqa: E402
@@ -98,6 +99,12 @@ class ChainTest(unittest.TestCase):
         self.assertIsNotNone(self.start())
         self.assertIsNone(self.start())  # same WhatsApp message id
 
+    def test_groups_are_recorded_even_when_ignored(self):
+        self.start(group="Autre groupe")
+        self.start(mid="wamid.2")
+        names = {g["name"] for g in self.store.seen_groups()}
+        self.assertEqual(names, {"Équipe Logistique"})  # same id "123@g.us", name updated
+
     def test_timeout_escalates(self):
         self.cfg.on_timeout = "next"
         cid = self.start()
@@ -111,6 +118,33 @@ class ChainTest(unittest.TestCase):
         self.mailer.inbox.append(Reply(cid, "chef.equipe@example.com", "oui", "<x>"))
         self.engine.poll()
         self.assertEqual(self.store.get(cid)["level"], 1)
+
+
+class SetupTest(unittest.TestCase):
+    def test_wizard_writes_valid_config_and_private_env(self):
+        answers = iter([
+            "Mon groupe", "",                                   # group, prefix
+            "2",                                                # ranks
+            "", "a@x.fr, B@x.fr", "12",                         # rank 1
+            "Direction", "pas-une-adresse", "d@x.fr", "0",      # rank 2 (one retry)
+            "next", "",                                         # timeout, notify
+            "outlook", "bot@x.fr", "demandes.example.fr",       # mail + domain
+        ])
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "config.json")
+            run_setup(path, ask=lambda _: next(answers), ask_secret=lambda _: "pw")
+            cfg = load_config(path)
+            self.assertEqual(cfg.groups, ["Mon groupe"])
+            self.assertEqual([lv.recipients for lv in cfg.levels], [["a@x.fr", "b@x.fr"], ["d@x.fr"]])
+            self.assertEqual((cfg.levels[1].name, cfg.on_timeout), ("Direction", "next"))
+            env_path = os.path.join(tmp, ".env")
+            self.assertEqual(os.stat(env_path).st_mode & 0o777, 0o600)
+            for key in ("SMTP_PASSWORD", "WEBHOOK_TOKEN", "DOMAIN"):
+                os.environ.pop(key, None)
+            load_dotenv(env_path)
+            self.assertEqual(os.environ["SMTP_PASSWORD"], "pw")
+            self.assertEqual(os.environ["DOMAIN"], "demandes.example.fr")
+            self.assertEqual(len(os.environ["WEBHOOK_TOKEN"]), 48)
 
 
 class ParsingTest(unittest.TestCase):

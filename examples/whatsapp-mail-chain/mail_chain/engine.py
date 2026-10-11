@@ -44,7 +44,12 @@ class Engine:
 
     def on_whatsapp_message(self, msg):
         """Start a chain for a group message. Return the chain id or None."""
-        if not msg.is_group or not self.accepts_group(msg.group_id, msg.group_name):
+        if not msg.is_group:
+            return None
+        self.store.see_group(msg.group_id, msg.group_name)
+        if not self.accepts_group(msg.group_id, msg.group_name):
+            log.info("message from group %s (%s) ignored: not in whatsapp.groups",
+                     msg.group_id, msg.group_name or "sans nom")
             return None
         text = msg.text.strip()
         prefix = self.cfg.trigger_prefix

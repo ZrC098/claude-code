@@ -1,0 +1,29 @@
+# docker compose up -d
+# - DOMAIN (dans .env) : nom de domaine qui pointe vers ce serveur, pour le HTTPS automatique.
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./config.json:/app/config.json:ro
+      - ./data:/app/data
+    expose:
+      - "8080"
+
+  caddy:
+    image: caddy:2.8
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN:?ajoutez DOMAIN=mon-domaine.fr dans .env}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+    depends_on:
+      - app
+
+volumes:
+  caddy_data:

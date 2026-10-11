@@ -85,21 +85,33 @@ class SmtpImapMailer:
         msg["Subject"] = subject
         msg["Message-ID"] = make_msgid()
         msg.set_content(body)
+        with self._smtp() as server:
+            server.send_message(msg)
+
+    def _smtp(self):
         if self.smtp_port == 465:
             server = smtplib.SMTP_SSL(self.smtp_host, self.smtp_port, timeout=30)
         else:
             server = smtplib.SMTP(self.smtp_host, self.smtp_port, timeout=30)
             server.starttls()
-        with server:
-            server.login(self.smtp_user, self.smtp_password)
-            server.send_message(msg)
+        server.login(self.smtp_user, self.smtp_password)
+        return server
 
-    def fetch_replies(self):
-        """Return unread chain replies and mark them as read."""
+    def check_smtp(self):
+        """Log in to the SMTP server without sending anything."""
+        with self._smtp():
+            pass
+
+    def fetch_replies(self, dry_run=False):
+        """Return unread chain replies and mark them as read (dry_run: only log in)."""
         replies = []
         with imaplib.IMAP4_SSL(self.imap_host, self.imap_port) as imap:
             imap.login(self.imap_user, self.imap_password)
-            imap.select(self.imap_folder)
+            status, _ = imap.select(self.imap_folder)
+            if status != "OK":
+                raise RuntimeError(f"IMAP folder not found: {self.imap_folder}")
+            if dry_run:
+                return replies
             status, data = imap.search(None, '(UNSEEN SUBJECT "[CHAIN-")')
             if status != "OK":
                 return replies

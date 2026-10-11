@@ -41,7 +41,7 @@ Garde-fous :
 
 ## Configuration
 
-Copiez `config.example.json` en `config.json` et adaptez :
+Lancez `python3 -m mail_chain setup`, ou copiez `config.example.json` en `config.json` et adaptez :
 
 | Clé | Rôle |
 | --- | --- |
@@ -53,7 +53,7 @@ Copiez `config.example.json` en `config.json` et adaptez :
 | `notify_on_close` | Adresses qui reçoivent le récapitulatif final. |
 | `subject_template`, `body_template` | Modèles des mails (champs : `{chain_id}`, `{group}`, `{sender}`, `{text}`, `{level_name}`, `{level_number}`, `{level_count}`, `{history}`, `{instructions}`). L'objet doit contenir `{chain_id}`. |
 
-Les secrets passent par des variables d'environnement :
+Les secrets passent par des variables d'environnement (fichier `.env`, créé par `setup`) :
 
 ```bash
 export SMTP_HOST=smtp.office365.com SMTP_PORT=587
@@ -92,18 +92,50 @@ curl -X POST http://localhost:8080/webhook/whatsapp \
   -d '{"id":"test-1","group_name":"Équipe Logistique","sender":"Paul","text":"Besoin de 3 palettes"}'
 ```
 
-## Lancer
+## Mise en service pas à pas
+
+1. **Un serveur** joignable depuis Internet (un petit VPS suffit) avec Docker,
+   et un nom de domaine (ou sous-domaine) qui pointe vers lui.
+2. **Configurer** (5 minutes) :
+   ```bash
+   git clone <ce dépôt> && cd claude-code/examples/whatsapp-mail-chain
+   python3 -m mail_chain setup     # écrit config.json et .env (secrets, lisible par vous seul)
+   python3 -m mail_chain check     # teste la connexion à la boîte mail
+   ```
+3. **Relier WhatsApp** : créez un compte chez Green-API ou Whapi.Cloud, reliez
+   un numéro WhatsApp (scan du QR code). Ce numéro doit **rejoindre le groupe** :
+   ouvrez le lien d'invitation du groupe sur le téléphone de ce numéro (ni
+   Green-API ni Whapi ne savent rejoindre un groupe par lien via leur API).
+   Dans le tableau de bord du fournisseur, collez l'URL de webhook affichée
+   à la fin de `setup` et activez les messages entrants.
+4. **Démarrer** :
+   ```bash
+   mkdir -p data && sudo chown 1000:1000 data   # le conteneur n'écrit pas en root
+   docker compose up -d
+   docker compose logs -f app
+   ```
+   Le HTTPS est obtenu automatiquement par Caddy pour le domaine `DOMAIN` de `.env`.
+5. **Vérifier le groupe** : envoyez un message dans le groupe, puis
+   `docker compose exec app python3 -m mail_chain groups --config /app/config.json`.
+   Si le groupe apparaît « ignoré » (nom différent), copiez son identifiant
+   `…@g.us` dans `whatsapp.groups` de `config.json`, puis `docker compose restart app`.
+
+Sans Docker : `deploy/mail-chain.service` (systemd), derrière votre propre reverse proxy HTTPS.
+
+Ne mettez jamais le lien d'invitation du groupe, `config.json` ni `.env`
+dans le dépôt : ils sont exclus par `.gitignore`.
+
+## Commandes
 
 ```bash
-cd examples/whatsapp-mail-chain
-python3 -m mail_chain serve  --config config.json   # webhook + lecture des mails en continu
-python3 -m mail_chain status --config config.json   # demandes en cours et leur rang
-python3 -m mail_chain poll   --config config.json   # lire les réponses une seule fois
-python3 -m unittest discover -s tests               # tests
+python3 -m mail_chain setup    # questions -> config.json + .env
+python3 -m mail_chain check    # config + connexion SMTP/IMAP
+python3 -m mail_chain serve    # webhook + lecture des mails en continu
+python3 -m mail_chain status   # demandes en cours et leur rang
+python3 -m mail_chain groups   # groupes WhatsApp vus et s'ils sont surveillés
+python3 -m mail_chain poll     # lire les réponses une seule fois
+python3 -m unittest discover -s tests
 ```
-
-En production, placez le service derrière un reverse proxy HTTPS (Caddy,
-nginx) et lancez-le avec systemd ou Docker pour qu'il redémarre tout seul.
 
 ## Limites
 
