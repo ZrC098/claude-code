@@ -1,0 +1,85 @@
+"""Turn incoming WhatsApp webhook payloads into a common message shape.
+
+Supported formats:
+  - generic: {"id", "group_id", "group_name", "sender", "text"} (for your own bridge)
+  - Green-API: typeWebhook == "incomingMessageReceived"
+  - Whapi.Cloud: {"messages": [{"chat_id": "...@g.us", ...}]}
+  - Meta WhatsApp Cloud API: {"object": "whatsapp_business_account", ...}
+"""
+
+from dataclasses import dataclass
+
+
+@dataclass
+class WaMessage:
+    message_id: str
+    group_id: str
+    group_name: str
+    sender: str
+    text: str
+
+    @property
+    def is_group(self):
+        return bool(self.group_id)
+
+
+def _generic(p):
+    return [WaMessage(str(p.get("id", "")), p.get("group_id", "") or p.get("group_name", ""),
+                      p.get("group_name", ""), p.get("sender", ""), p.get("text", ""))]
+
+
+def _green_api(p):
+    if p.get("typeWebhook") != "incomingMessageReceived":
+        return []
+    sd = p.get("senderData", {})
+    md = p.get("messageData", {})
+    text = (md.get("textMessageData", {}).get("textMessage")
+            or md.get("extendedTextMessageData", {}).get("text", ""))
+    chat = sd.get("chatId", "")
+    if not chat.endswith("@g.us"):
+        return []
+    return [WaMessage(p.get("idMessage", ""), chat, sd.get("chatName", ""),
+                      sd.get("senderName") or sd.get("sender", ""), text)]
+
+
+def _whapi(p):
+    out = []
+    for m in p.get("messages", []):
+        chat = m.get("chat_id", "")
+        if m.get("from_me") or not chat.endswith("@g.us"):
+            continue
+        text = (m.get("text") or {}).get("body", "")
+        out.append(WaMessage(m.get("id", ""), chat, m.get("chat_name", ""),
+                             m.get("from_name") or m.get("from", ""), text))
+    return out
+
+
+def _meta(p):
+    out = []
+    for entry in p.get("entry", []):
+        for change in entry.get("changes", []):
+            value = change.get("value", {})
+            names = {c.get("wa_id"): c.get("profile", {}).get("name", "")
+                     for c in value.get("contacts", [])}
+            for m in value.get("messages", []):
+                if m.get("type") != "text":
+                    continue
+                group = m.get("group_id", "")  # only set for Groups API messages
+                if not group:
+                    continue
+                out.append(WaMessage(m.get("id", ""), group, "",
+                                     names.get(m.get("from")) or m.get("from", ""),
+                                     m.get("text", {}).get("body", "")))
+    return out
+
+
+def parse_payload(payload):
+    if payload.get("object") == "whatsapp_business_account":
+        return _meta(payload)
+    if "typeWebhook" in payload:
+        return _green_api(payload)
+    if "messages" in payload:
+        return _whapi(payload)
+    if "text" in payload:
+        return _generic(payload)
+    return []

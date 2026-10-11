@@ -1,0 +1,151 @@
+import json
+import os
+import sys
+import tempfile
+import unittest
+from email.message import EmailMessage
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+from mail_chain.config import load_config  # noqa: E402
+from mail_chain.engine import Engine, match_rule  # noqa: E402
+from mail_chain.mailer import CHAIN_TAG, Reply, parse_reply, strip_quoted  # noqa: E402
+from mail_chain.store import Store  # noqa: E402
+from mail_chain.whatsapp import WaMessage, parse_payload  # noqa: E402
+
+EXAMPLE = os.path.join(os.path.dirname(__file__), "..", "config.example.json")
+
+
+class FakeMailer:
+    def __init__(self):
+        self.sent = []
+        self.inbox = []
+
+    def send(self, to, subject, body):
+        self.sent.append((list(to), subject, body))
+
+    def fetch_replies(self):
+        replies, self.inbox = self.inbox, []
+        return replies
+
+
+class ChainTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        with open(EXAMPLE, encoding="utf-8") as f:
+            raw = json.load(f)
+        raw["db_path"] = os.path.join(self.tmp.name, "db.sqlite3")
+        path = os.path.join(self.tmp.name, "config.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(raw, f)
+        self.cfg = load_config(path)
+        self.mailer = FakeMailer()
+        self.store = Store(self.cfg.db_path)
+        self.engine = Engine(self.cfg, self.store, self.mailer)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def start(self, mid="wamid.1", group="Équipe Logistique"):
+        return self.engine.on_whatsapp_message(
+            WaMessage(mid, "123@g.us", group, "Paul", "Besoin de 3 palettes pour demain"))
+
+    def reply(self, chain_id, sender, body, mid):
+        return self.engine.on_reply(Reply(chain_id, sender, body, mid))
+
+    def test_full_chain_to_final_level(self):
+        cid = self.start()
+        self.assertEqual(self.mailer.sent[-1][0], ["chef.equipe@example.com", "adjoint@example.com"])
+        self.assertEqual(CHAIN_TAG.search(self.mailer.sent[-1][1]).group(1), cid)
+
+        self.assertEqual(self.reply(cid, "adjoint@example.com", "OK pour moi", "<a>"), "level:2")
+        self.assertEqual(self.mailer.sent[-1][0], ["responsable.site@example.com"])
+        self.assertIn("réponse de adjoint@example.com : OK pour moi", self.mailer.sent[-1][2])
+
+        self.assertEqual(self.reply(cid, "responsable.site@example.com", "Validé", "<b>"), "level:3")
+        self.assertEqual(self.mailer.sent[-1][0], ["direction@example.com"])
+
+        self.assertEqual(self.reply(cid, "direction@example.com", "oui", "<c>"), "approved")
+        self.assertEqual(self.store.get(cid)["status"], "approved")
+        self.assertIn("VALIDÉE", self.mailer.sent[-1][1])  # notify_on_close
+
+    def test_refusal_stops_chain(self):
+        cid = self.start()
+        self.assertEqual(self.reply(cid, "chef.equipe@example.com", "Non, pas de stock", "<a>"), "rejected")
+        self.assertEqual(self.reply(cid, "chef.equipe@example.com", "oui", "<b>"), "ignored")
+
+    def test_goto_rule_on_final_level(self):
+        cid = self.start()
+        self.reply(cid, "chef.equipe@example.com", "ok", "<a>")
+        self.reply(cid, "responsable.site@example.com", "ok", "<b>")
+        self.assertEqual(self.reply(cid, "direction@example.com", "À revoir svp", "<c>"), "level:1")
+        self.assertEqual(self.mailer.sent[-1][0][0], "chef.equipe@example.com")
+
+    def test_reply_from_outsider_or_wrong_level_is_ignored(self):
+        cid = self.start()
+        self.assertEqual(self.reply(cid, "intrus@example.com", "ok", "<a>"), "ignored")
+        self.assertEqual(self.reply(cid, "direction@example.com", "ok", "<b>"), "ignored")
+        self.assertEqual(self.store.get(cid)["level"], 0)
+
+    def test_unrecognised_and_duplicate(self):
+        cid = self.start()
+        self.assertEqual(self.reply(cid, "chef.equipe@example.com", "Je regarde", "<a>"), "unrecognised")
+        self.assertEqual(self.reply(cid, "chef.equipe@example.com", "ok", "<b>"), "level:2")
+        self.assertEqual(self.reply(cid, "chef.equipe@example.com", "ok", "<b>"), "duplicate")
+
+    def test_group_filter_and_dedupe(self):
+        self.assertIsNone(self.start(group="Autre groupe"))
+        self.assertIsNotNone(self.start())
+        self.assertIsNone(self.start())  # same WhatsApp message id
+
+    def test_timeout_escalates(self):
+        self.cfg.on_timeout = "next"
+        cid = self.start()
+        sent_at = self.store.get(cid)["level_sent_at"]
+        self.assertEqual(self.engine.check_timeouts(sent_at + 23 * 3600), [])
+        self.assertEqual(self.engine.check_timeouts(sent_at + 24 * 3600), [cid])
+        self.assertEqual(self.store.get(cid)["level"], 1)
+
+    def test_poll_reads_inbox(self):
+        cid = self.start()
+        self.mailer.inbox.append(Reply(cid, "chef.equipe@example.com", "oui", "<x>"))
+        self.engine.poll()
+        self.assertEqual(self.store.get(cid)["level"], 1)
+
+
+class ParsingTest(unittest.TestCase):
+    def test_match_rule_whole_words_and_accents(self):
+        cfg_rules = load_config(EXAMPLE).rules
+        self.assertEqual(match_rule("VALIDE !", cfg_rules).action, "next")
+        self.assertEqual(match_rule("Refusé.", cfg_rules).action, "stop")
+        self.assertIsNone(match_rule("nonobstant\nok", cfg_rules))  # only first line, whole words
+
+    def test_strip_quoted(self):
+        body = "Oui go\n\nLe lun. 6 oct. 2026, Bot a écrit :\n> Merci de répondre OK"
+        self.assertEqual(strip_quoted(body), "Oui go")
+
+    def test_parse_reply(self):
+        msg = EmailMessage()
+        msg["From"] = "Chef <Chef.Equipe@example.com>"
+        msg["Subject"] = "RE: [CHAIN-abcd1234] Rang 1 - Demande"
+        msg["Message-ID"] = "<m1@example.com>"
+        msg.set_content("ok\n> quoted")
+        r = parse_reply(msg.as_bytes())
+        self.assertEqual((r.chain_id, r.sender, r.body), ("abcd1234", "chef.equipe@example.com", "ok"))
+
+    def test_webhook_formats(self):
+        green = {"typeWebhook": "incomingMessageReceived", "idMessage": "g1",
+                 "senderData": {"chatId": "1@g.us", "chatName": "G", "senderName": "Ana"},
+                 "messageData": {"typeMessage": "textMessage", "textMessageData": {"textMessage": "hi"}}}
+        whapi = {"messages": [{"id": "w1", "chat_id": "2@g.us", "from": "33", "from_me": False,
+                               "text": {"body": "yo"}}]}
+        private = {"messages": [{"id": "w2", "chat_id": "33@s.whatsapp.net", "text": {"body": "x"}}]}
+        generic = {"id": "x1", "group_name": "G", "sender": "Bob", "text": "hello"}
+        self.assertEqual(parse_payload(green)[0].text, "hi")
+        self.assertEqual(parse_payload(whapi)[0].group_id, "2@g.us")
+        self.assertEqual(parse_payload(private), [])
+        self.assertTrue(parse_payload(generic)[0].is_group)
+
+
+if __name__ == "__main__":
+    unittest.main()
