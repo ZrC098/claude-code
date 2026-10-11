@@ -142,3 +142,16 @@ end;
 $$;
 
 revoke execute on function public.mc_apply_decision from public, anon, authenticated;
+
+-- Optional: read the Brevo key from Supabase Vault (secret "mc_brevo_api_key")
+-- when no BREVO_API_KEY Edge Function secret is set. Service role only.
+create function public.mc_mail_key()
+returns text
+language sql
+security definer
+set search_path = ''
+as $$
+  select decrypted_secret from vault.decrypted_secrets where name = 'mc_brevo_api_key' limit 1;
+$$;
+revoke execute on function public.mc_mail_key from public, anon, authenticated;
+grant execute on function public.mc_mail_key to service_role;

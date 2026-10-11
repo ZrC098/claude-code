@@ -97,11 +97,20 @@ export function labels(mode: Settings["mode"]) {
         intro: "Une demande est arrivée sur WhatsApp. Merci d'y répondre :" };
 }
 
-// Brevo when BREVO_API_KEY is set (works with a single verified address, no
+// The Brevo key comes from the BREVO_API_KEY Edge Function secret, or else
+// from Supabase Vault (secret "mc_brevo_api_key", read by mc_mail_key()).
+async function brevoKey(sb: SupabaseClient) {
+  const env = Deno.env.get("BREVO_API_KEY");
+  if (env) return env;
+  const { data } = await sb.rpc("mc_mail_key");
+  return (data as string | null) || null;
+}
+
+// Brevo when a key is available (works with a single verified address, no
 // domain needed), otherwise Resend (needs a verified domain).
-async function sendMail(from: string, to: string[], subject: string, html: string, text: string) {
+async function sendMail(sb: SupabaseClient, from: string, to: string[], subject: string, html: string, text: string) {
   if (!from) throw new Error("mc_settings.mail_from est vide");
-  const brevo = Deno.env.get("BREVO_API_KEY");
+  const brevo = await brevoKey(sb);
   if (brevo) {
     const m = from.match(/^\s*(.*?)\s*<([^>]+)>\s*$/);
     const sender = m ? { name: m[1] || m[2], email: m[2] } : { email: from.trim() };
@@ -166,7 +175,7 @@ export async function sendLevel(sb: SupabaseClient, s: Settings, levels: Level[]
       const text = `Demande WhatsApp (${chain.grp}) de ${chain.sender} :\n\n${chain.text}\n\n` +
         (hist.length ? `Historique :\n${hist.map((h) => `- ${h}`).join("\n")}\n\n` : "") +
         `${l.approve} : ${url("approve")}\n${l.reject} : ${url("reject")}\n`;
-      await sendMail(s.mail_from, [to], subject, html, text);
+      await sendMail(sb, s.mail_from, [to], subject, html, text);
       await sb.from("mc_events").insert({ chain_id: chain.id, level: chain.level, kind: "sent", actor: to });
     } catch (err) {
       console.error(`chain ${chain.id}: mail to ${to} failed`, err);
@@ -187,7 +196,7 @@ export async function notifyClose(sb: SupabaseClient, s: Settings, levels: Level
     <ul>${hist.map((h) => `<li>${esc(h)}</li>`).join("")}</ul></div>`;
   const text = `Demande ${word} (${chain.grp}) :\n\n${chain.text}\n\n${hist.map((h) => `- ${h}`).join("\n")}\n`;
   try {
-    await sendMail(s.mail_from, s.notify_on_close, `Demande ${word} - ${chain.grp}`, html, text);
+    await sendMail(sb, s.mail_from, s.notify_on_close, `Demande ${word} - ${chain.grp}`, html, text);
   } catch (err) {
     console.error(`chain ${chain.id}: close notification failed`, err);
     await sb.from("mc_events").insert({
