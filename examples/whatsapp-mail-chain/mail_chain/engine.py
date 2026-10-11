@@ -13,6 +13,12 @@ def _normalize(text):
     return "".join(c for c in text if not unicodedata.combining(c))
 
 
+def phone_key(value):
+    """Compare phone numbers whatever their format: 06..., +33 6..., 336...@c.us."""
+    digits = re.sub(r"\D", "", value.split("@")[0])
+    return digits[-9:] if len(digits) >= 9 else digits
+
+
 def match_rule(body, rules):
     """Return the first rule whose keyword appears as a whole word in the reply.
 
@@ -42,6 +48,13 @@ class Engine:
         allowed = {g.lower() for g in self.cfg.groups}
         return (group_id or "").lower() in allowed or (group_name or "").lower() in allowed
 
+    def accepts_sender(self, msg):
+        if not self.cfg.allowed_senders:
+            return True
+        # Numbers only: display names are chosen by the sender and can be faked.
+        keys = {phone_key(n) for n in self.cfg.allowed_senders if phone_key(n)}
+        return phone_key(msg.sender) in keys
+
     def on_whatsapp_message(self, msg):
         """Start a chain for a group message. Return the chain id or None."""
         if not msg.is_group:
@@ -50,6 +63,13 @@ class Engine:
         if not self.accepts_group(msg.group_id, msg.group_name):
             log.info("message from group %s (%s) ignored: not in whatsapp.groups",
                      msg.group_id, msg.group_name or "sans nom")
+            return None
+        if not self.accepts_sender(msg):
+            log.warning("message from %s ignored: not in whatsapp.allowed_senders", msg.sender)
+            return None
+        limit = self.cfg.max_chains_per_hour
+        if limit and self.store.chains_since(time.time() - 3600) >= limit:
+            log.error("max_chains_per_hour (%s) reached: message %s ignored", limit, msg.message_id)
             return None
         text = msg.text.strip()
         prefix = self.cfg.trigger_prefix
@@ -60,7 +80,8 @@ class Engine:
         if not text:
             return None
         chain_id = self.store.create_chain(
-            msg.message_id, msg.group_name or msg.group_id, msg.sender, text)
+            msg.message_id, msg.group_name or msg.group_id,
+            msg.sender_name or msg.sender.split("@")[0], text)
         if chain_id is None:
             log.info("WhatsApp message %s already handled", msg.message_id)
             return None

@@ -5,6 +5,7 @@ Supported formats:
   - Green-API: typeWebhook == "incomingMessageReceived"
   - Whapi.Cloud: {"messages": [{"chat_id": "...@g.us", ...}]}
   - Meta WhatsApp Cloud API: {"object": "whatsapp_business_account", ...}
+  - WAHA (self-hosted): {"event": "message", "session": ..., "payload": {...}}
 """
 
 from dataclasses import dataclass
@@ -17,6 +18,7 @@ class WaMessage:
     group_name: str
     sender: str
     text: str
+    sender_name: str = ""
 
     @property
     def is_group(self):
@@ -73,7 +75,23 @@ def _meta(p):
     return out
 
 
+def _waha(p):
+    # "message" fires for incoming messages only ("message.any" would include our own).
+    m = p.get("payload") or {}
+    if p.get("event") != "message" or m.get("fromMe"):
+        return []
+    chat = m.get("from", "")
+    if not chat.endswith("@g.us"):
+        return []
+    data = m.get("_data") or {}
+    sender = m.get("participant") or data.get("author", "")
+    return [WaMessage(m.get("id", ""), chat, "", sender, m.get("body") or "",
+                      sender_name=data.get("notifyName", ""))]
+
+
 def parse_payload(payload):
+    if "event" in payload and "payload" in payload:
+        return _waha(payload)
     if payload.get("object") == "whatsapp_business_account":
         return _meta(payload)
     if "typeWebhook" in payload:

@@ -68,6 +68,9 @@ class Store:
         rows = self._exec("SELECT * FROM chains WHERE id=?", (chain_id,))
         return rows[0] if rows else None
 
+    def chains_since(self, since):
+        return self._exec("SELECT COUNT(*) FROM chains WHERE created_at >= ?", (since,))[0][0]
+
     def open_chains(self):
         return self._exec("SELECT * FROM chains WHERE status='open'")
 

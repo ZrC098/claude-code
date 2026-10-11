@@ -105,6 +105,20 @@ class ChainTest(unittest.TestCase):
         names = {g["name"] for g in self.store.seen_groups()}
         self.assertEqual(names, {"Équipe Logistique"})  # same id "123@g.us", name updated
 
+    def test_allowed_senders_by_number_only(self):
+        self.cfg.allowed_senders = ["06 12 34 56 78"]
+        msg = lambda mid, sender, name="": WaMessage(mid, "123@g.us", "Équipe Logistique",
+                                                     sender, "demande", sender_name=name)
+        self.assertIsNotNone(self.engine.on_whatsapp_message(msg("a", "33612345678@c.us")))
+        self.assertIsNone(self.engine.on_whatsapp_message(msg("b", "33700000000@c.us", "06 12 34 56 78")))
+
+    def test_hourly_cap(self):
+        self.cfg.max_chains_per_hour = 2
+        self.assertIsNotNone(self.start("m1"))
+        self.assertIsNotNone(self.start("m2"))
+        self.assertIsNone(self.start("m3"))
+        self.assertEqual(len(self.mailer.sent), 2)
+
     def test_timeout_escalates(self):
         self.cfg.on_timeout = "next"
         cid = self.start()
@@ -124,6 +138,7 @@ class SetupTest(unittest.TestCase):
     def test_wizard_writes_valid_config_and_private_env(self):
         answers = iter([
             "Mon groupe", "",                                   # group, prefix
+            "06 12 34 56 78", "5",                              # allowed senders, max/hour
             "2",                                                # ranks
             "", "a@x.fr, B@x.fr", "12",                         # rank 1
             "Direction", "pas-une-adresse", "d@x.fr", "0",      # rank 2 (one retry)
@@ -139,12 +154,14 @@ class SetupTest(unittest.TestCase):
             self.assertEqual((cfg.levels[1].name, cfg.on_timeout), ("Direction", "next"))
             env_path = os.path.join(tmp, ".env")
             self.assertEqual(os.stat(env_path).st_mode & 0o777, 0o600)
-            for key in ("SMTP_PASSWORD", "WEBHOOK_TOKEN", "DOMAIN"):
+            self.assertEqual((cfg.allowed_senders, cfg.max_chains_per_hour), (["06 12 34 56 78"], 5))
+            for key in ("SMTP_PASSWORD", "WEBHOOK_TOKEN", "DOMAIN", "WAHA_API_KEY"):
                 os.environ.pop(key, None)
             load_dotenv(env_path)
             self.assertEqual(os.environ["SMTP_PASSWORD"], "pw")
             self.assertEqual(os.environ["DOMAIN"], "demandes.example.fr")
             self.assertEqual(len(os.environ["WEBHOOK_TOKEN"]), 48)
+            self.assertNotEqual(os.environ["WAHA_API_KEY"], os.environ["WEBHOOK_TOKEN"])
 
 
 class ParsingTest(unittest.TestCase):
@@ -174,6 +191,15 @@ class ParsingTest(unittest.TestCase):
         whapi = {"messages": [{"id": "w1", "chat_id": "2@g.us", "from": "33", "from_me": False,
                                "text": {"body": "yo"}}]}
         private = {"messages": [{"id": "w2", "chat_id": "33@s.whatsapp.net", "text": {"body": "x"}}]}
+        waha = {"event": "message", "session": "default",
+                "payload": {"id": "false_9@g.us_A", "from": "9@g.us", "fromMe": False,
+                            "participant": "33612345678@c.us", "body": "palettes",
+                            "_data": {"notifyName": "Paul"}}}
+        own = {"event": "message", "payload": {"from": "9@g.us", "fromMe": True, "body": "x"}}
+        msg = parse_payload(waha)[0]
+        self.assertEqual((msg.group_id, msg.sender, msg.sender_name, msg.text),
+                         ("9@g.us", "33612345678@c.us", "Paul", "palettes"))
+        self.assertEqual(parse_payload(own), [])
         generic = {"id": "x1", "group_name": "G", "sender": "Bob", "text": "hello"}
         self.assertEqual(parse_payload(green)[0].text, "hi")
         self.assertEqual(parse_payload(whapi)[0].group_id, "2@g.us")

@@ -26,6 +26,8 @@ class Level:
 class Config:
     groups: list
     trigger_prefix: str
+    allowed_senders: list
+    max_chains_per_hour: int
     levels: list
     rules: list
     on_timeout: str  # "next", "stop" or "wait"
@@ -111,6 +113,8 @@ def load_config(path):
     cfg = Config(
         groups=wa.get("groups", []),
         trigger_prefix=wa.get("trigger_prefix", ""),
+        allowed_senders=[str(n) for n in wa.get("allowed_senders", [])],
+        max_chains_per_hour=int(raw.get("max_chains_per_hour", 10)),
         levels=levels,
         rules=_parse_rules(raw.get("rules", DEFAULT_RULES), "rules"),
         on_timeout=on_timeout,

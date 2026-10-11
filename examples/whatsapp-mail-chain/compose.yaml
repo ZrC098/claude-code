@@ -1,5 +1,13 @@
 # docker compose up -d
-# - DOMAIN (dans .env) : nom de domaine qui pointe vers ce serveur, pour le HTTPS automatique.
+#
+# WAHA links your WhatsApp number and forwards group messages to the app over
+# a private Docker network. Nothing is reachable from the Internet: WAHA only
+# listens on 127.0.0.1 of the server (open it through an SSH tunnel), and it
+# connects out to WhatsApp by itself, so no domain or open port is needed.
+#
+# Using Green-API / Whapi instead of WAHA? They must reach the webhook from the
+# Internet: start the HTTPS proxy too with `docker compose --profile public up -d`
+# and set DOMAIN in .env.
 services:
   app:
     build: .
@@ -8,22 +16,42 @@ services:
     volumes:
       - ./config.json:/app/config.json:ro
       - ./data:/app/data
-    expose:
-      - "8080"
+    networks: [internal, outside]   # outside: to reach the SMTP/IMAP servers; no port is published
+
+  waha:
+    # Pin a version once it works for you, e.g. devlikeapro/waha:<version>.
+    image: devlikeapro/waha:latest
+    restart: unless-stopped
+    environment:
+      WAHA_API_KEY: ${WAHA_API_KEY:?lancez python3 -m mail_chain setup pour créer .env}
+      WHATSAPP_HOOK_URL: http://app:8080/webhook/whatsapp?token=${WEBHOOK_TOKEN}
+      WHATSAPP_HOOK_EVENTS: message
+      WHATSAPP_RESTART_ALL_SESSIONS: "True"
+    ports:
+      - "127.0.0.1:3000:3000"   # local only: ssh -L 3000:127.0.0.1:3000 <serveur>
+    volumes:
+      - ./data/waha:/app/.sessions
+    networks: [internal, outside]
 
   caddy:
+    profiles: [public]
     image: caddy:2.8
     restart: unless-stopped
     environment:
-      DOMAIN: ${DOMAIN:?ajoutez DOMAIN=mon-domaine.fr dans .env}
+      DOMAIN: ${DOMAIN:-localhost}
     ports:
       - "80:80"
       - "443:443"
     volumes:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
-    depends_on:
-      - app
+    depends_on: [app]
+    networks: [internal, outside]
+
+networks:
+  internal:
+    internal: true   # app <-> WAHA only
+  outside: {}
 
 volumes:
   caddy_data:

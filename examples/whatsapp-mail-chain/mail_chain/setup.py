@@ -48,6 +48,9 @@ def build_config(ask=input):
     print("connaissez pas : lancez ensuite `python3 -m mail_chain groups` pour le retrouver.")
     group = _ask("Nom du groupe", ask=ask)
     prefix = _ask("Préfixe obligatoire des messages (ex. #demande, vide = tous les messages)", ask=ask)
+    print("Les mails partent vers vos clients : limitez qui peut déclencher une demande.")
+    senders = _ask("Numéros autorisés à déclencher, séparés par des virgules (vide = tout le groupe)", ask=ask)
+    max_per_hour = _ask_int("Nombre maximum de demandes par heure (0 = illimité)", 10, ask=ask)
 
     print("\n== Rangs ==")
     count = max(1, _ask_int("Combien de rangs (listes successives) ?", 3, ask=ask))
@@ -67,7 +70,9 @@ def build_config(ask=input):
                          ask=ask, allow_empty=True)
     return {
         "whatsapp": {"groups": [group] if group else [], "trigger_prefix": prefix,
+                     "allowed_senders": [n.strip() for n in senders.split(",") if n.strip()],
                      "webhook_path": "/webhook/whatsapp"},
+        "max_chains_per_hour": max_per_hour,
         "levels": levels,
         "on_timeout": on_timeout,
         "notify_on_close": notify,
@@ -93,12 +98,14 @@ def build_env(ask=input, ask_secret=getpass.getpass):
         print("  Gmail : utilisez un « mot de passe d'application » (myaccount.google.com/apppasswords).")
     password = ask_secret("Mot de passe (non affiché) : ")
     print("\n== Serveur ==")
-    domain = _ask("Nom de domaine du serveur pour le HTTPS (ex. demandes.mon-site.fr, vide si inconnu)", ask=ask)
+    print("Avec WAHA (recommandé), aucun domaine n'est nécessaire : laissez vide.")
+    domain = _ask("Domaine HTTPS, seulement pour Green-API / Whapi (ex. demandes.mon-site.fr)", ask=ask)
     return {
         "DOMAIN": domain,
         "SMTP_HOST": smtp_host, "SMTP_PORT": smtp_port, "SMTP_USER": user,
         "SMTP_PASSWORD": password, "MAIL_FROM": user, "IMAP_HOST": imap_host,
         "WEBHOOK_TOKEN": secrets.token_hex(24),
+        "WAHA_API_KEY": secrets.token_hex(24),
     }
 
 
@@ -126,6 +133,9 @@ def run_setup(config_path, ask=input, ask_secret=getpass.getpass):
     env = build_env(ask, ask_secret)
     write_env(env_path, env)
     print(f"{env_path} écrit (lisible par vous seul).")
-    print("\nURL à donner au fournisseur WhatsApp :")
-    print(f"  https://{env['DOMAIN'] or '<serveur>'}/webhook/whatsapp?token={env['WEBHOOK_TOKEN']}")
-    print("Étape suivante : `python3 -m mail_chain check`, puis `docker compose up -d`.")
+    print("\nÉtapes suivantes :")
+    print("  python3 -m mail_chain check")
+    print("  docker compose up -d")
+    print("  ./deploy/link-whatsapp.sh <votre numéro>   # affiche le code à saisir dans WhatsApp")
+    if env["DOMAIN"]:
+        print(f"Webhook pour Green-API / Whapi : https://{env['DOMAIN']}/webhook/whatsapp?token={env['WEBHOOK_TOKEN']}")

@@ -75,6 +75,7 @@ Formats reconnus automatiquement :
 
 | Fournisseur | Remarque |
 | --- | --- |
+| [WAHA](https://waha.devlike.pro) (auto-hébergé, gratuit) | Inclus dans `compose.yaml`, rien à exposer. Voir ci-dessous. |
 | [Green-API](https://green-api.com) | Webhook « incomingMessageReceived ». URL : `…/webhook/whatsapp?token=$WEBHOOK_TOKEN`. |
 | [Whapi.Cloud](https://whapi.cloud) | Webhook « messages ». Même URL avec `?token=`. |
 | API WhatsApp Cloud (Meta) | Messages de groupe seulement si votre compte a accès à l'API Groups. Vérification par `META_VERIFY_TOKEN`, signature par `META_APP_SECRET`. |
@@ -92,38 +93,63 @@ curl -X POST http://localhost:8080/webhook/whatsapp \
   -d '{"id":"test-1","group_name":"Équipe Logistique","sender":"Paul","text":"Besoin de 3 palettes"}'
 ```
 
-## Mise en service pas à pas
+## Mise en service pas à pas (WAHA, recommandé)
 
-1. **Un serveur** joignable depuis Internet (un petit VPS suffit) avec Docker,
-   et un nom de domaine (ou sous-domaine) qui pointe vers lui.
-2. **Configurer** (5 minutes) :
+[WAHA](https://waha.devlike.pro) est une passerelle WhatsApp gratuite que vous
+hébergez vous-même : vos messages ne passent par aucun service tiers, et rien
+n'est ouvert sur Internet (WAHA se connecte lui-même à WhatsApp).
+
+1. **Un serveur allumé en permanence** avec Docker (petit VPS, vieux PC, Raspberry Pi).
+2. **Configurer** :
    ```bash
    git clone <ce dépôt> && cd claude-code/examples/whatsapp-mail-chain
    python3 -m mail_chain setup     # écrit config.json et .env (secrets, lisible par vous seul)
    python3 -m mail_chain check     # teste la connexion à la boîte mail
    ```
-3. **Relier WhatsApp** : créez un compte chez Green-API ou Whapi.Cloud, reliez
-   un numéro WhatsApp (scan du QR code). Ce numéro doit **rejoindre le groupe** :
-   ouvrez le lien d'invitation du groupe sur le téléphone de ce numéro (ni
-   Green-API ni Whapi ne savent rejoindre un groupe par lien via leur API).
-   Dans le tableau de bord du fournisseur, collez l'URL de webhook affichée
-   à la fin de `setup` et activez les messages entrants.
-4. **Démarrer** :
+3. **Démarrer** :
    ```bash
    mkdir -p data && sudo chown 1000:1000 data   # le conteneur n'écrit pas en root
    docker compose up -d
-   docker compose logs -f app
    ```
-   Le HTTPS est obtenu automatiquement par Caddy pour le domaine `DOMAIN` de `.env`.
-5. **Vérifier le groupe** : envoyez un message dans le groupe, puis
+4. **Relier le numéro WhatsApp** (sur le serveur) :
+   ```bash
+   ./deploy/link-whatsapp.sh 06XXXXXXXX
+   ```
+   Le script affiche un code de 8 caractères. Sur le téléphone : WhatsApp >
+   Paramètres > Appareils connectés > Connecter un appareil > « Connecter avec
+   un numéro de téléphone », puis saisissez le code. À défaut, scannez le QR
+   code du tableau de bord WAHA : `ssh -L 3000:127.0.0.1:3000 <serveur>`, puis
+   http://localhost:3000/dashboard (clé : `WAHA_API_KEY` de `.env`).
+5. **Le groupe** : le numéro doit en faire partie (sinon ouvrez le lien
+   d'invitation sur ce téléphone). Envoyez un message dans le groupe, puis
    `docker compose exec app python3 -m mail_chain groups --config /app/config.json`.
-   Si le groupe apparaît « ignoré » (nom différent), copiez son identifiant
-   `…@g.us` dans `whatsapp.groups` de `config.json`, puis `docker compose restart app`.
+   WAHA ne transmet pas le nom du groupe : copiez son identifiant `…@g.us`
+   dans `whatsapp.groups` de `config.json`, puis `docker compose restart app`.
+
+Avec Green-API / Whapi à la place de WAHA : renseignez `DOMAIN` dans `.env`,
+lancez `docker compose --profile public up -d` (HTTPS automatique par Caddy) et
+donnez au fournisseur l'URL `https://<DOMAIN>/webhook/whatsapp?token=<WEBHOOK_TOKEN>`.
 
 Sans Docker : `deploy/mail-chain.service` (systemd), derrière votre propre reverse proxy HTTPS.
 
-Ne mettez jamais le lien d'invitation du groupe, `config.json` ni `.env`
-dans le dépôt : ils sont exclus par `.gitignore`.
+## Sécurité (les mails partent vers des clients)
+
+- **Qui déclenche** : `whatsapp.allowed_senders` liste les numéros autorisés
+  (`06…`, `+33…` ou l'identifiant affiché dans les logs). Seul le numéro compte,
+  jamais le nom affiché, qui peut être imité. Vide = tout membre du groupe.
+- **Groupe** : seuls les groupes de `whatsapp.groups` sont pris en compte.
+- **Débit** : `max_chains_per_hour` (10 par défaut) bloque un emballement ou un abus.
+- **Destinataires figés** : les adresses viennent uniquement de `config.json`,
+  jamais du message WhatsApp ; seule une personne du rang en cours fait avancer la demande.
+- **Réseau** : WAHA et le webhook ne sont pas exposés à Internet ; l'API WAHA
+  est protégée par `WAHA_API_KEY`, le webhook par `WEBHOOK_TOKEN` (aléatoires, dans `.env`).
+- **Mail** : boîte dédiée, mot de passe d'application, TLS obligatoire. Pour
+  ne pas finir en spam chez vos clients, vérifiez que SPF, DKIM et DMARC sont
+  configurés sur le domaine d'envoi.
+- **Numéro** : WAHA n'est pas une API officielle de WhatsApp ; un compte relié
+  ainsi peut être suspendu. Un numéro dédié limite le risque pour votre ligne principale.
+- **Secrets** : `config.json`, `.env`, `data/` (session WhatsApp comprise) et
+  le lien d'invitation ne doivent jamais être versionnés.
 
 ## Commandes
 
