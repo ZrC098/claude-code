@@ -91,8 +91,10 @@ export async function verifyLink(secret: string, token: string): Promise<LinkPay
 
 export function labels(mode: Settings["mode"]) {
   return mode === "cascade"
-    ? { approve: "Accepter", reject: "Refuser", approved: "attribuée", rejected: "sans preneur" }
-    : { approve: "Valider", reject: "Refuser", approved: "validée", rejected: "refusée" };
+    ? { approve: "Oui, dispo", reject: "Pas dispo", approved: "bookée", rejected: "sans preneur",
+        intro: "Un transport est à booker. Êtes-vous dispo ?" }
+    : { approve: "Valider", reject: "Refuser", approved: "validée", rejected: "refusée",
+        intro: "Une demande est arrivée sur WhatsApp. Merci d'y répondre :" };
 }
 
 async function sendMail(from: string, to: string[], subject: string, html: string, text: string) {
@@ -141,7 +143,7 @@ export async function sendLevel(sb: SupabaseClient, s: Settings, levels: Level[]
       const btn = (a: string, label: string, color: string) =>
         `<a href="${esc(url(a))}" style="display:inline-block;padding:12px 22px;margin:4px 8px 4px 0;border-radius:8px;background:${color};color:#fff;text-decoration:none;font-weight:600">${label}</a>`;
       const html = `<div style="font-family:system-ui,Arial,sans-serif;font-size:15px;color:#18181b;max-width:560px">
-        <p>Bonjour,</p><p>Une demande est arrivée sur WhatsApp. Merci d'y répondre :</p>${block(chain)}${histHtml}
+        <p>Bonjour,</p><p>${esc(l.intro)}</p>${block(chain)}${histHtml}
         <p>${btn("approve", l.approve, "#15803d")}${btn("reject", l.reject, "#b91c1c")}</p>
         <p style="color:#71717a;font-size:13px">${esc(level.name)}, étape ${chain.level + 1}/${levels.length}. Lien personnel, valable ${Math.round(s.link_ttl_hours / 24)} jours : ne le transférez pas.</p></div>`;
       const text = `Demande WhatsApp (${chain.grp}) de ${chain.sender} :\n\n${chain.text}\n\n` +

@@ -32,7 +32,7 @@ Groupe WhatsApp ──Whapi──▶ Supabase « whatsapp-webhook » ──Resen
 
 | Colonne | Rôle |
 | --- | --- |
-| `mode` | `validation` : Valider → rang suivant, Refuser → clôture. `cascade` : Accepter → clôture (attribuée), Refuser → rang suivant quand tout le rang a refusé. |
+| `mode` | `validation` : Valider → rang suivant, Refuser → clôture. `cascade` : Oui, dispo → clôture (bookée), Pas dispo → rang suivant quand tout le rang a refusé. |
 | `groups` | Identifiants des groupes surveillés (`…@g.us`). Vide = aucun : les groupes vus apparaissent dans `mc_seen_groups`. |
 | `allowed_senders` | Numéros autorisés à déclencher (vide = tout le groupe). Le nom affiché n'est jamais utilisé. |
 | `max_chains_per_hour` | Plafond de demandes par heure (10). |
