@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Réponse à la demande</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main>
+    <h1>Réponse à la demande</h1>
+    <p id="status" class="muted">Chargement…</p>
+
+    <section id="request" hidden>
+      <p class="meta"><span id="level"></span> · Groupe <b id="group"></b> · De <b id="sender"></b></p>
+      <blockquote id="text"></blockquote>
+      <p class="muted small">Vous répondez en tant que <span id="recipient"></span></p>
+    </section>
+
+    <form id="form" hidden>
+      <label for="comment">Commentaire (facultatif)</label>
+      <textarea id="comment" maxlength="500" rows="3" placeholder="Ex. : disponible demain 8h"></textarea>
+      <div class="actions">
+        <button type="button" id="approve" class="approve"></button>
+        <button type="button" id="reject" class="reject"></button>
+      </div>
+    </form>
+
+    <p id="result" role="status" hidden></p>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>
